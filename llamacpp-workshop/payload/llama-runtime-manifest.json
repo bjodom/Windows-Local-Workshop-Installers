@@ -1,0 +1,49 @@
+{
+  "package": "hermes-llamacpp-gemma4-workshop-windows-x64-intel-vulkan-v0.3.0",
+  "created_at": "2026-09-02T15:07:36.0458657-07:00",
+  "delivery": {
+    "audience": "hands-on workshop attendees",
+    "workflow": "manual PowerShell command line",
+    "participant_helper_scripts": false,
+    "model_bundled": false
+  },
+  "source": {
+    "repository": "https://github.com/ggml-org/llama.cpp",
+    "release": "v0.3.0",
+    "commit": "c1d0e7a004015f23bc0233470b747b596f29b264"
+  },
+  "build": {
+    "architecture": "windows-x64",
+    "compiler": "MSVC 19.44.35228.0",
+    "vulkan_sdk": "1.4.357.0",
+    "vulkan": true,
+    "shared_libraries": false,
+    "msvc_runtime": "static",
+    "openmp": false,
+    "native_cpu_tuning": false,
+    "openssl": false,
+    "web_ui": false
+  },
+  "model": {
+    "repository": "google/gemma-4-26B-A4B-it-qat-q4_0-gguf",
+    "file": "gemma-4-26B_q4_0-it.gguf",
+    "sha256": "3eca3b8f6d7baf218a7dd6bba5fb59a56ee25fe2d567b6f5f589b4f697eca51d",
+    "bundled": false,
+    "revision": "8afd43710afbb87c711f33f7e7c11b1434a9fa1a"
+  },
+  "previous_model_validation": {
+    "gpu": "Intel Arc B390",
+    "context": 65536,
+    "openai_chat": true,
+    "openai_tool_calling": true,
+    "hermes_installer_commit": "30b83ab7b1f194503de9f5545d88c81c4db91e3f",
+    "hermes_local_endpoint": true,
+    "model": "google/gemma-4-E4B-it-qat-q4_0-gguf"
+  },
+  "validation": {
+    "model": "google/gemma-4-26B-A4B-it-qat-q4_0-gguf",
+    "status": "local_chat_passed",
+    "note": "2026-09-08: SHA256 verified; Intel Arc B390 driver 32.0.101.8359, context 65536, Vulkan startup and local chat passed. Workshop skills, other laptops, and company hotspot not validated."
+  }
+}
+

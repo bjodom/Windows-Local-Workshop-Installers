@@ -1,0 +1,20 @@
+{
+  "package": "workshop_easy_installation",
+  "audience": "broader team requiring automated setup",
+  "target": "Windows x64 with Intel Vulkan-capable GPU",
+  "installation": "Install-HermesLocalWorkshop.ps1",
+  "installed_workshop_directory": "%USERPROFILE%\\Hermes-Local-Workshop\\hermes-llamacpp-gemma4-workshop-windows-x64-intel-vulkan-v0.3.0",
+  "components": {
+    "hermes_commit": "30b83ab7b1f194503de9f5545d88c81c4db91e3f",
+    "llama_cpp_release": "v0.3.0",
+    "llama_cpp_commit": "c1d0e7a004015f23bc0233470b747b596f29b264",
+    "llama_cpp_backend": "Vulkan",
+    "model": "google/gemma-4-26B-A4B-it-qat-q4_0-gguf",
+    "model_file": "gemma-4-26B_q4_0-it.gguf",
+    "model_sha256": "3eca3b8f6d7baf218a7dd6bba5fb59a56ee25fe2d567b6f5f589b4f697eca51d",
+    "model_revision": "8afd43710afbb87c711f33f7e7c11b1434a9fa1a"
+  },
+  "model_bundled": false,
+  "model_download_automated": true,
+  "local_endpoint": "http://127.0.0.1:8080/v1"
+}
