@@ -255,6 +255,13 @@ restores the caller's PowerShell environment after loading OVMS runtime variable
 detects port conflicts, and removes a stale OVMS process left behind by an
 interrupted startup.
 
+Before downloading, the installer performs a non-blocking connectivity check for
+GitHub, the Hermes installer host, and Hugging Face. It uses Windows proxy and
+certificate settings, TLS 1.2, a bounded request timeout, a workshop user agent,
+and retries transient HTTP failures while honoring `Retry-After` for rate limits.
+The preflight is diagnostic only: a proxy that rejects `HEAD` requests or an
+already-cached offline rerun can still continue to the normal installer checks.
+
 ## Where the model files are stored
 
 Everything the workshop downloads stays inside one folder, so nothing is scattered
@@ -340,3 +347,8 @@ nothing extra to set before retrying. If the same file keeps failing, the transf
 being blocked or throttled upstream rather than by the workshop scripts — try a
 different network connection, or ask your IT contact whether `huggingface.co` and its
 CDN endpoints are permitted through the proxy.
+
+The installer also prints a preflight result for each external host before the
+OVMS archive download. A failed preflight is a warning, not an automatic stop;
+the detailed failure and the retry attempts are recorded in the installation
+transcript under `logs`.

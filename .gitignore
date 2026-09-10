@@ -1,0 +1,24 @@
+# Editor and operating-system metadata
+.vscode/*.log
+.vscode/*.tmp
+.DS_Store
+Thumbs.db
+
+# Runtime output created by local workshop launches
+**/logs/
+**/.state/
+**/.ovcache/
+**/WORKSHOP_READY.txt
+
+# Interrupted, temporary, or quarantined downloads and extractions
+**/*.partial
+**/*.partial.*
+**/*.tmp-*
+**/*.invalid-*
+**/*.forced-*
+**/ovms.previous-*/
+**/.ovms-extract-*/
+
+# Local Python/tool caches if workshop utilities are run from the repository
+**/__pycache__/
+*.py[cod]

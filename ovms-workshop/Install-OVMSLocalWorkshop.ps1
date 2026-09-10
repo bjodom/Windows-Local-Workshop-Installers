@@ -152,27 +152,76 @@ function Get-HttpStatusCode {
 
 function Invoke-DownloadWithRetry {
     param([string]$Uri, [string]$OutFile, [int]$MaxAttempts = 6)
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $requestHeaders = @{ "User-Agent" = "Windows-Local-Workshop-Installer/$ovmsVersion" }
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
         try {
-            Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing
+            Invoke-WebRequest `
+                -Uri $Uri `
+                -OutFile $OutFile `
+                -Headers $requestHeaders `
+                -TimeoutSec 120 `
+                -UseBasicParsing
             return
         }
         catch {
             Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
-            if ($attempt -eq $MaxAttempts) { throw }
             $statusCode = Get-HttpStatusCode $_
+            $retryableStatusCodes = @(408, 425, 429, 500, 502, 503, 504)
+            if ($statusCode -and $statusCode -notin $retryableStatusCodes) {
+                throw "Download failed with HTTP ${statusCode}: $Uri`n$($_.Exception.Message)"
+            }
+            if ($attempt -eq $MaxAttempts) { throw }
             $retryAfterSeconds = Get-HttpRetryAfterSeconds $_
             if ($statusCode -eq 429) {
                 # GitHub rate limits can require a longer cooldown than a simple backoff.
-                $retryDelay = if ($retryAfterSeconds) { $retryAfterSeconds } else { 30 * $attempt }
+                $retryDelay = if ($retryAfterSeconds) { [math]::Min($retryAfterSeconds, 300) } else { 30 * $attempt }
                 Write-Warning "Download attempt $attempt of $MaxAttempts was rate limited (HTTP 429). Retrying in $retryDelay seconds."
             }
             else {
-                $retryDelay = 5 * $attempt
+                $retryDelay = [math]::Min(5 * $attempt, 30)
                 Write-Warning "Download attempt $attempt of $MaxAttempts failed ($($_.Exception.Message)). Retrying in $retryDelay seconds."
             }
             Start-Sleep -Seconds $retryDelay
         }
+    }
+}
+
+function Test-ExternalDownloadEndpoint {
+    param([string]$Name, [string]$Uri)
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    try {
+        Invoke-WebRequest `
+            -Uri $Uri `
+            -Method Head `
+            -Headers @{ "User-Agent" = "Windows-Local-Workshop-Installer/$ovmsVersion" } `
+            -TimeoutSec 20 `
+            -MaximumRedirection 5 `
+            -UseBasicParsing | Out-Null
+        Write-Host "  - ${Name}: reachable" -ForegroundColor Green
+        return $true
+    }
+    catch {
+        # A 405 still proves that DNS, TLS, and the proxy reached the server.
+        $statusCode = Get-HttpStatusCode $_
+        if ($statusCode -eq 405) {
+            Write-Host "  - ${Name}: reachable (HEAD not supported)" -ForegroundColor Green
+            return $true
+        }
+        Write-Warning "$Name could not be reached before download (HTTP $statusCode): $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Test-WorkshopNetwork {
+    $checks = @(
+        @{ Name = "GitHub release host"; Uri = $ovmsUrl }
+        @{ Name = "Hermes installer host"; Uri = $installerUrl }
+        @{ Name = "Hugging Face model host"; Uri = "https://huggingface.co/$($selectedModel.SourceModel)" }
+    )
+    $failedChecks = @($checks | Where-Object { -not (Test-ExternalDownloadEndpoint -Name $_.Name -Uri $_.Uri) })
+    if ($failedChecks.Count -gt 0) {
+        Write-Warning "One or more external endpoints failed the preflight. The installer will continue and retry downloads, but a proxy or firewall rule may need attention."
     }
 }
 
@@ -192,6 +241,18 @@ function Invoke-NativeCommandCapture {
     }
     $capturedText = @($capturedItems | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
     return [pscustomobject]@{ ExitCode = $nativeExitCode; Text = $capturedText }
+}
+
+function Write-AtomicTextFile {
+    param([string]$LiteralPath, [string]$Content)
+    $temporaryPath = "$LiteralPath.tmp-$PID"
+    try {
+        [IO.File]::WriteAllText($temporaryPath, $Content, (New-Object System.Text.UTF8Encoding($false)))
+        Move-Item -LiteralPath $temporaryPath -Destination $LiteralPath -Force
+    }
+    finally {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Invoke-HermesInstaller {
@@ -317,6 +378,7 @@ try {
     # verified above since this script relies on it being on PATH.
 
     Write-Step 2 "Download and extract OVMS $ovmsVersion"
+    Test-WorkshopNetwork
     if (Test-Path -LiteralPath $ovmsExe) {
         Write-Host "[OK] OVMS is already installed at $ovmsExe" -ForegroundColor Green
     }
@@ -328,10 +390,33 @@ try {
             Remove-Item -LiteralPath $ovmsZipPath -Force -ErrorAction SilentlyContinue
             throw "OVMS download failed SHA-256 verification. Expected $expectedDigest, got $actualDigest."
         }
-        Expand-Archive -Path $ovmsZipPath -DestinationPath $installRoot -Force
-        Remove-Item -LiteralPath $ovmsZipPath -Force -ErrorAction SilentlyContinue
-        if (-not (Test-Path -LiteralPath $ovmsExe)) {
-            throw "OVMS extraction did not produce $ovmsExe."
+        $extractRoot = Join-Path $installRoot ".ovms-extract-$PID"
+        $stagedOvmsDir = Join-Path $extractRoot "ovms"
+        $previousOvmsDir = Join-Path $installRoot "ovms.previous-$PID"
+        try {
+            Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Path $extractRoot -Force | Out-Null
+            Expand-Archive -Path $ovmsZipPath -DestinationPath $extractRoot -Force
+            if (-not (Test-Path -LiteralPath (Join-Path $stagedOvmsDir "ovms.exe"))) {
+                throw "OVMS extraction did not produce $(Join-Path $stagedOvmsDir 'ovms.exe')."
+            }
+
+            if (Test-Path -LiteralPath $ovmsDir) {
+                Move-Item -LiteralPath $ovmsDir -Destination $previousOvmsDir -Force
+            }
+            Move-Item -LiteralPath $stagedOvmsDir -Destination $ovmsDir -Force
+            Remove-Item -LiteralPath $previousOvmsDir -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $ovmsZipPath -Force -ErrorAction SilentlyContinue
+        }
+        catch {
+            if (Test-Path -LiteralPath $previousOvmsDir) {
+                Remove-Item -LiteralPath $ovmsDir -Recurse -Force -ErrorAction SilentlyContinue
+                Move-Item -LiteralPath $previousOvmsDir -Destination $ovmsDir -Force -ErrorAction SilentlyContinue
+            }
+            throw
+        }
+        finally {
+            Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
         Write-Host "[OK] OVMS $ovmsVersion extracted." -ForegroundColor Green
     }
@@ -379,7 +464,7 @@ try {
         # The start script records the selection when it runs; record it here when it doesn't.
         New-Item -ItemType Directory -Path $stateDirectory -Force | Out-Null
         @{ model = $Model; source_model = $selectedModel.SourceModel; saved_at = (Get-Date).ToString("o") } |
-            ConvertTo-Json | Set-Content -LiteralPath $modelStatePath -Encoding UTF8
+            ConvertTo-Json | ForEach-Object { Write-AtomicTextFile -LiteralPath $modelStatePath -Content $_ }
         Write-Host "Server start was skipped by request."
     }
 
@@ -444,7 +529,7 @@ try {
         "Hermes: $hermesVersion"
         "Model: $Model ($($selectedModel.SourceModel))"
         "Endpoint: http://127.0.0.1:$Port/v1"
-    ) | Set-Content -LiteralPath $readyFile -Encoding UTF8
+    ) -join [Environment]::NewLine | ForEach-Object { Write-AtomicTextFile -LiteralPath $readyFile -Content $_ }
 
     Write-Host ""
     Write-Host "==============================================================" -ForegroundColor Green

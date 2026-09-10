@@ -122,12 +122,16 @@ are reused when valid.
 ## Home and company networks
 
 Double-click the same `RUN_EASY_SETUP.cmd` on either network. The Hermes installer
-is fetched over HTTPS only (no SSH/Git clone), with automatic retries that honor
-a server's `Retry-After` header if a download is rate-limited (HTTP 429).
+is fetched over HTTPS only (no SSH/Git clone). Before downloading, setup performs
+a non-blocking connectivity check for the Hermes installer host and Hugging Face.
+The downloads use Windows proxy and certificate settings, TLS 1.2, bounded request
+timeouts, a workshop user agent, and automatic retries that honor a server's
+`Retry-After` header if a download is rate-limited (HTTP 429).
 
 Model downloads try curl, then Windows HTTPS (Windows proxy/certificate settings),
-with bounded retries and resume support. If a server ignores resume requests,
-the Windows downloader safely starts the file again. SHA-256 is checked afterward.
+with bounded retries and resume support. Transient HTTP errors are retried while
+permanent HTTP errors stop immediately. If a server ignores resume requests, the
+Windows downloader safely starts the file again. SHA-256 is checked afterward.
 
 The network must still allow `hermes-agent.nousresearch.com`, Python package
 hosting, Node.js, Hugging Face and its download CDN, and the `winget` package

@@ -21,6 +21,18 @@ $modelAlias = "gemma-4-26b-a4b-local"
 $healthUrl = "http://127.0.0.1:$Port/health"
 $modelsUrl = "http://127.0.0.1:$Port/v1/models"
 
+function Write-AtomicTextFile {
+    param([string]$LiteralPath, [string]$Content)
+    $temporaryPath = "$LiteralPath.tmp-$PID"
+    try {
+        [IO.File]::WriteAllText($temporaryPath, $Content, (New-Object System.Text.UTF8Encoding($false)))
+        Move-Item -LiteralPath $temporaryPath -Destination $LiteralPath -Force
+    }
+    finally {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Test-WorkshopEndpoint {
     try {
         $health = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 5
@@ -45,7 +57,7 @@ if (Test-WorkshopEndpoint) {
     $readyListener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
         Select-Object -First 1
     if ($readyListener) {
-        [IO.File]::WriteAllText($pidFile, [string]$readyListener.OwningProcess)
+        Write-AtomicTextFile -LiteralPath $pidFile -Content ([string]$readyListener.OwningProcess)
     }
     Write-Host "[OK] Gemma 4 is already available at http://127.0.0.1:$Port/v1" -ForegroundColor Green
     return
@@ -78,6 +90,9 @@ $serverArguments = @(
 )
 
 Write-Host "Starting local Gemma 4 server on the Intel GPU..." -ForegroundColor Cyan
+$serverProcess = $null
+$serverReady = $false
+try {
 $serverProcess = Start-Process `
     -FilePath $serverExe `
     -ArgumentList $serverArguments `
@@ -87,7 +102,7 @@ $serverProcess = Start-Process `
     -RedirectStandardError $stderrLog `
     -PassThru
 
-[IO.File]::WriteAllText($pidFile, [string]$serverProcess.Id)
+Write-AtomicTextFile -LiteralPath $pidFile -Content ([string]$serverProcess.Id)
 @{
     process_id = $serverProcess.Id
     executable = $serverExe
@@ -96,7 +111,7 @@ $serverProcess = Start-Process `
     started_at = (Get-Date).ToString("o")
     stdout_log = $stdoutLog
     stderr_log = $stderrLog
-} | ConvertTo-Json | Set-Content -LiteralPath $serverInfoFile -Encoding UTF8
+} | ConvertTo-Json | ForEach-Object { Write-AtomicTextFile -LiteralPath $serverInfoFile -Content $_ }
 
 $deadline = (Get-Date).AddSeconds($WaitSeconds)
 do {
@@ -111,6 +126,7 @@ do {
     }
 
     if (Test-WorkshopEndpoint) {
+        $serverReady = $true
         Write-Host "[OK] Local Gemma 4 endpoint is ready: http://127.0.0.1:$Port/v1" -ForegroundColor Green
         Write-Host "[OK] llama-server process ID: $($serverProcess.Id)" -ForegroundColor Green
         return
@@ -120,3 +136,9 @@ do {
 } while ((Get-Date) -lt $deadline)
 
 throw "Timed out waiting for Gemma 4. Review: $stderrLog"
+}
+finally {
+    if ($null -ne $serverProcess -and -not $serverReady -and -not $serverProcess.HasExited) {
+        Stop-Process -Id $serverProcess.Id -Force -ErrorAction SilentlyContinue
+    }
+}

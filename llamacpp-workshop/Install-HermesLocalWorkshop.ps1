@@ -35,7 +35,8 @@ function Receive-WorkshopDownload {
     # Windows PowerShell/.NET uses the Windows proxy and certificate settings.
     # Stream to disk; never buffer the multi-GB model in memory.
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
+    $userAgent = "Windows-Local-Workshop-Installer/llamacpp"
+    for ($attempt = 1; $attempt -le 6; $attempt++) {
         $response = $null
         $inputStream = $null
         $outputStream = $null
@@ -43,6 +44,7 @@ function Receive-WorkshopDownload {
             $offset = 0L
             if (Test-Path -LiteralPath $Destination) { $offset = (Get-Item -LiteralPath $Destination).Length }
             $request = [Net.HttpWebRequest]::Create($Uri)
+            $request.UserAgent = $userAgent
             $request.Timeout = 30000
             $request.ReadWriteTimeout = 60000
             if ($offset -gt 0) { $request.AddRange($offset) }
@@ -69,17 +71,24 @@ function Receive-WorkshopDownload {
             return
         }
         catch {
-            if ($attempt -eq 3) {
-                throw "Download failed after three Windows HTTPS attempts. Partial data is preserved. Check access to Hugging Face and its download CDN on this network. Details: $($_.Exception.Message)"
+            $statusCode = Get-HttpStatusCode $_
+            $retryableStatusCodes = @(408, 425, 429, 500, 502, 503, 504)
+            if ($statusCode -and $statusCode -notin $retryableStatusCodes) {
+                throw "Download failed with HTTP ${statusCode}. Partial data is preserved. Check access to Hugging Face and its download CDN on this network.`n$($_.Exception.Message)"
             }
-            Write-Host "  - Windows HTTPS connection interrupted; retrying ($attempt/3)."
+            if ($attempt -eq 6) {
+                throw "Download failed after six Windows HTTPS attempts. Partial data is preserved. Check access to Hugging Face and its download CDN on this network. Details: $($_.Exception.Message)"
+            }
+            $retryAfterSeconds = Get-HttpRetryAfterSeconds $_
+            $retryDelay = if ($retryAfterSeconds) { [math]::Min($retryAfterSeconds, 300) } else { [math]::Min(5 * $attempt, 30) }
+            Write-Host "  - Windows HTTPS connection interrupted; retrying ($attempt/6) in $retryDelay seconds."
+            Start-Sleep -Seconds $retryDelay
         }
         finally {
             if ($outputStream) { $outputStream.Dispose() }
             if ($inputStream) { $inputStream.Dispose() }
             if ($response) { $response.Dispose() }
         }
-        Start-Sleep -Seconds 3
     }
 }
 
@@ -115,6 +124,18 @@ function Invoke-NativeCommandCapture {
         Text = $capturedText
     }
 }
+
+    function Write-AtomicTextFile {
+        param([string]$LiteralPath, [string]$Content)
+        $temporaryPath = "$LiteralPath.tmp-$PID"
+        try {
+            [IO.File]::WriteAllText($temporaryPath, $Content, (New-Object System.Text.UTF8Encoding($false)))
+            Move-Item -LiteralPath $temporaryPath -Destination $LiteralPath -Force
+        }
+        finally {
+            Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+        }
+    }
 
 function Invoke-HermesInstaller {
     param([string]$Label, [string[]]$InstallerArguments)
@@ -195,27 +216,75 @@ function Get-HttpRetryAfterSeconds {
 
 function Invoke-DownloadWithRetry {
     param([string]$Uri, [string]$OutFile, [int]$MaxAttempts = 6)
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $requestHeaders = @{ "User-Agent" = "Windows-Local-Workshop-Installer/llamacpp" }
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
         try {
-            Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing
+            Invoke-WebRequest `
+                -Uri $Uri `
+                -OutFile $OutFile `
+                -Headers $requestHeaders `
+                -TimeoutSec 120 `
+                -UseBasicParsing
             return
         }
         catch {
             Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
-            if ($attempt -eq $MaxAttempts) { throw }
             $statusCode = Get-HttpStatusCode $_
+            $retryableStatusCodes = @(408, 425, 429, 500, 502, 503, 504)
+            if ($statusCode -and $statusCode -notin $retryableStatusCodes) {
+                throw "Download failed with HTTP ${statusCode}: $Uri`n$($_.Exception.Message)"
+            }
+            if ($attempt -eq $MaxAttempts) { throw }
             $retryAfterSeconds = Get-HttpRetryAfterSeconds $_
             if ($statusCode -eq 429) {
                 # Rate limits can require a longer cooldown than a simple backoff.
-                $retryDelay = if ($retryAfterSeconds) { $retryAfterSeconds } else { 30 * $attempt }
+                $retryDelay = if ($retryAfterSeconds) { [math]::Min($retryAfterSeconds, 300) } else { 30 * $attempt }
                 Write-Warning "Download attempt $attempt of $MaxAttempts was rate limited (HTTP 429). Retrying in $retryDelay seconds."
             }
             else {
-                $retryDelay = 5 * $attempt
+                $retryDelay = [math]::Min(5 * $attempt, 30)
                 Write-Warning "Download attempt $attempt of $MaxAttempts failed ($($_.Exception.Message)). Retrying in $retryDelay seconds."
             }
             Start-Sleep -Seconds $retryDelay
         }
+    }
+}
+
+function Test-ExternalDownloadEndpoint {
+    param([string]$Name, [string]$Uri)
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    try {
+        Invoke-WebRequest `
+            -Uri $Uri `
+            -Method Head `
+            -Headers @{ "User-Agent" = "Windows-Local-Workshop-Installer/llamacpp" } `
+            -TimeoutSec 20 `
+            -MaximumRedirection 5 `
+            -UseBasicParsing | Out-Null
+        Write-Host "  - ${Name}: reachable" -ForegroundColor Green
+        return $true
+    }
+    catch {
+        # A 405 still proves that DNS, TLS, and the proxy reached the server.
+        $statusCode = Get-HttpStatusCode $_
+        if ($statusCode -eq 405) {
+            Write-Host "  - ${Name}: reachable (HEAD not supported)" -ForegroundColor Green
+            return $true
+        }
+        Write-Warning "$Name could not be reached before download (HTTP $statusCode): $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Test-WorkshopNetwork {
+    $checks = @(
+        @{ Name = "Hermes installer host"; Uri = $installerUrl }
+        @{ Name = "Hugging Face model host"; Uri = "https://huggingface.co/google/gemma-4-26B-A4B-it-qat-q4_0-gguf" }
+    )
+    $failedChecks = @($checks | Where-Object { -not (Test-ExternalDownloadEndpoint -Name $_.Name -Uri $_.Uri) })
+    if ($failedChecks.Count -gt 0) {
+        Write-Warning "One or more external endpoints failed the preflight. The installer will continue and retry downloads, but a proxy or firewall rule may need attention."
     }
 }
 
@@ -371,6 +440,7 @@ try {
     Write-Host "[OK] Precompiled llama.cpp can access the Intel GPU through Vulkan." -ForegroundColor Green
 
     Write-Step 2 "Install and verify Hermes Agent"
+    Test-WorkshopNetwork
     if (-not $SkipHermesInstall) {
         [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
         Invoke-DownloadWithRetry -Uri $installerUrl -OutFile $installerPath
@@ -416,6 +486,11 @@ try {
             Move-Item -LiteralPath $modelPath -Destination $invalidModelPath
             Write-Warning "An invalid model file was preserved as: $invalidModelPath"
         }
+        if ($ForceModelDownload -and (Test-Path -LiteralPath $modelPartialPath)) {
+            $forcedPartialPath = "$modelPartialPath.forced-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+            Move-Item -LiteralPath $modelPartialPath -Destination $forcedPartialPath -Force
+            Write-Warning "The previous partial model was preserved as: $forcedPartialPath"
+        }
 
         $installDriveName = ([IO.Path]::GetPathRoot($installRoot)).TrimEnd("\").TrimEnd(":")
         $installDrive = Get-PSDrive -Name $installDriveName
@@ -425,7 +500,7 @@ try {
 
         $curlCommand = Get-Command curl.exe -ErrorAction SilentlyContinue
         if ($curlCommand) {
-            & $curlCommand.Source -L --fail --connect-timeout 30 --speed-limit 1024 --speed-time 60 --retry 2 --retry-delay 3 -C - -o $modelPartialPath $modelUrl
+            & $curlCommand.Source -L --fail --http1.1 --user-agent "Windows-Local-Workshop-Installer/llamacpp" --connect-timeout 30 --speed-limit 1024 --speed-time 60 --retry 2 --retry-delay 3 --retry-max-time 300 -C - -o $modelPartialPath $modelUrl
             if ($LASTEXITCODE -ne 0) {
                 Write-Host "  - curl could not finish; switching to Windows HTTPS with resume support."
                 Receive-WorkshopDownload -Uri $modelUrl -Destination $modelPartialPath
@@ -437,7 +512,9 @@ try {
 
         $downloadedModelSha = Get-Sha256Hash -LiteralPath $modelPartialPath
         if ($downloadedModelSha -ne $expectedModelSha) {
-            throw "Gemma 4 checksum verification failed. The partial file was kept at $modelPartialPath."
+            $invalidPartialPath = "$modelPartialPath.invalid-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+            Move-Item -LiteralPath $modelPartialPath -Destination $invalidPartialPath -Force
+            throw "Gemma 4 checksum verification failed. The invalid partial file was preserved as $invalidPartialPath."
         }
         Move-Item -LiteralPath $modelPartialPath -Destination $modelPath -Force
     }
@@ -514,7 +591,7 @@ try {
         "Model SHA-256: $verifiedModelSha"
         "Practice directory: $practiceDirectory"
         "Exercises: $(Join-Path $installRoot 'TASKS.md')"
-    ) | Set-Content -LiteralPath $readyFile -Encoding UTF8
+    ) -join [Environment]::NewLine | ForEach-Object { Write-AtomicTextFile -LiteralPath $readyFile -Content $_ }
 
     Write-Host ""
     Write-Host "==============================================================" -ForegroundColor Green

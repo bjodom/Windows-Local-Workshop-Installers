@@ -29,6 +29,18 @@ $pidFile = Join-Path $stateDirectory "ovms-server.pid"
 $serverInfoFile = Join-Path $stateDirectory "ovms-server.json"
 $modelsUrl = "http://127.0.0.1:$Port/v1/models"
 
+function Write-AtomicTextFile {
+    param([string]$LiteralPath, [string]$Content)
+    $temporaryPath = "$LiteralPath.tmp-$PID"
+    try {
+        [IO.File]::WriteAllText($temporaryPath, $Content, (New-Object System.Text.UTF8Encoding($false)))
+        Move-Item -LiteralPath $temporaryPath -Destination $LiteralPath -Force
+    }
+    finally {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 if (-not (Test-Path -LiteralPath $modelConfigPath)) {
     throw "Model configuration is missing: $modelConfigPath"
 }
@@ -66,10 +78,24 @@ function ConvertTo-ProcessArgument {
     return '"' + $escaped + '"'
 }
 
+function Test-CurrentUserProcess {
+    param($ProcessInfo)
+    try {
+        $ownerInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $($ProcessInfo.Id)" |
+            Invoke-CimMethod -MethodName GetOwner
+        if ($ownerInfo.ReturnValue -ne 0) { return $false }
+        $processOwner = "$($ownerInfo.Domain)\$($ownerInfo.User)"
+        return [string]::Equals($processOwner, "$env:USERDOMAIN\$env:USERNAME", [StringComparison]::OrdinalIgnoreCase)
+    }
+    catch {
+        return $false
+    }
+}
+
 function Save-SelectedModelState {
     New-Item -ItemType Directory -Path $stateDirectory -Force | Out-Null
     @{ model = $Model; source_model = $selectedModel.SourceModel; saved_at = (Get-Date).ToString("o") } |
-        ConvertTo-Json | Set-Content -LiteralPath $modelStatePath -Encoding UTF8
+        ConvertTo-Json | ForEach-Object { Write-AtomicTextFile -LiteralPath $modelStatePath -Content $_ }
 }
 
 if (-not (Test-Path -LiteralPath $ovmsExe)) {
@@ -88,7 +114,11 @@ if ($TargetDevice -eq "Auto") {
 # Clean up any such leftover before proceeding, unless it's actually serving already.
 if (-not (Test-WorkshopEndpoint)) {
     $staleProcesses = @(Get-Process -Name "ovms" -ErrorAction SilentlyContinue | Where-Object {
-        try { [IO.Path]::GetFullPath($_.Path) -eq [IO.Path]::GetFullPath($ovmsExe) } catch { $false }
+        try {
+            [IO.Path]::GetFullPath($_.Path) -eq [IO.Path]::GetFullPath($ovmsExe) -and
+                (Test-CurrentUserProcess $_)
+        }
+        catch { $false }
     })
     foreach ($staleProcess in $staleProcesses) {
         Write-Warning "Stopping a leftover ovms.exe process (PID $($staleProcess.Id)) from a previous run that never finished starting."
@@ -123,7 +153,7 @@ try {
         $readyListener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
             Select-Object -First 1
         if ($readyListener) {
-            [IO.File]::WriteAllText($pidFile, [string]$readyListener.OwningProcess)
+            Write-AtomicTextFile -LiteralPath $pidFile -Content ([string]$readyListener.OwningProcess)
         }
         Write-Host "[OK] $Model is already available at http://127.0.0.1:$Port/v1" -ForegroundColor Green
         return
@@ -166,6 +196,9 @@ try {
 
     Write-Host "Starting $Model on OVMS (first run also downloads the model from Hugging Face)..." -ForegroundColor Cyan
     Save-SelectedModelState
+    $serverProcess = $null
+    $serverReady = $false
+    try {
     $serverProcess = Start-Process `
         -FilePath $ovmsExe `
         -ArgumentList $serverArguments `
@@ -187,7 +220,7 @@ try {
         [Environment]::SetEnvironmentVariable($key, $envSnapshotBeforeSetupVars[$key], "Process")
     }
 
-    [IO.File]::WriteAllText($pidFile, [string]$serverProcess.Id)
+    Write-AtomicTextFile -LiteralPath $pidFile -Content ([string]$serverProcess.Id)
     @{
         process_id = $serverProcess.Id
         executable = $ovmsExe
@@ -197,7 +230,7 @@ try {
         started_at = (Get-Date).ToString("o")
         stdout_log = $stdoutLog
         stderr_log = $stderrLog
-    } | ConvertTo-Json | Set-Content -LiteralPath $serverInfoFile -Encoding UTF8
+    } | ConvertTo-Json | ForEach-Object { Write-AtomicTextFile -LiteralPath $serverInfoFile -Content $_ }
 
     $deadline = (Get-Date).AddSeconds($WaitSeconds)
     $stdoutLinesShown = 0
@@ -229,6 +262,7 @@ try {
         }
 
         if (Test-WorkshopEndpoint) {
+            $serverReady = $true
             Write-Host "[OK] Local $Model endpoint is ready: http://127.0.0.1:$Port/v1" -ForegroundColor Green
             Write-Host "[OK] ovms.exe process ID: $($serverProcess.Id)" -ForegroundColor Green
             return
@@ -242,6 +276,12 @@ try {
         Stop-Process -Id $serverProcess.Id -Force -ErrorAction SilentlyContinue
     }
     throw "Timed out waiting for $Model to become ready (model download can take a while on first run). Review: $stderrLog"
+    }
+    finally {
+        if ($null -ne $serverProcess -and -not $serverReady -and -not $serverProcess.HasExited) {
+            Stop-Process -Id $serverProcess.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 finally {
     # Belt-and-suspenders: guarantee the caller's environment is restored even if an
