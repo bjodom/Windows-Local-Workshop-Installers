@@ -1,24 +1,24 @@
-# Hermes Skills Hands-on Lab
+# Hermes Skills Hands-On Lab
 
-## Built-in, installed, and custom skills with local Gemma 4
+## Built-In, Installed, and Custom Skills with Local Gemma 4
 
-**Time:** 50 minutes you Kathy
+**Time:** 50 minutes
 **Format:** Work in pairs; each person runs the commands on their own computer
-**Goal:** Use three types of Hermes skill and produce evidence that each one worked
+**Goal:** Use three types of Hermes skills and produce evidence that each one worked
 
 By the end of this lab, you will be able to:
 
-1. find and invoke a skill bundled with Hermes;
-2. inspect, install, verify, and use an official optional skill; and
-3. create a focused `SKILL.md`, load it in a new session, and use it.
+1. Find and invoke a skill bundled with Hermes.
+2. Inspect, install, verify, and use an official optional skill.
+3. Create a focused `SKILL.md`, load it in a new session, and use it.
 
 ## What you will produce
 
 Keep all generated files. They are your evidence that each skill worked.
 
-| Exercise | Skill type                      | Deliverable                                        |
-| -------- | ------------------------------- | -------------------------------------------------- |
-| 1        | Bundled                         | `DEBUG_REPORT.md`                                |
+| Exercise | Skill type                      | Deliverable                                      |
+| -------- | ------------------------------- | ------------------------------------------------ |
+| 1        | Bundled                         | `DEBUG_REPORT.md`                               |
 | 2        | Installed from the official Hub | `LOCAL_AI_MEME.png` and `MY_WORKSHOP_MEME.png` |
 | 3        | Custom                          | `LOCAL_AI_READINESS.md` and your `SKILL.md`    |
 
@@ -32,7 +32,7 @@ Complete the main `README.md` first. The following must already work:
   `http://127.0.0.1:8080/v1`, and model `gemma-4-26b-a4b-local`; and
 - a normal Hermes prompt receives an answer from the local model.
 
-Open a new PowerShell window, move to the extracted workshop directory, and
+Open a new PowerShell window, go to the extracted workshop directory, and
 then enter the practice directory created during the main lab:
 
 ```powershell
@@ -40,8 +40,8 @@ cd "$env:USERPROFILE\Hermes-Local-Workshop\hermes-llamacpp-gemma4-workshop-windo
 cd ".\hermes-practice"
 ```
 
-If you extracted the ZIP somewhere else, use that location instead. Confirm
-that the server and Hermes are ready:
+If you extracted the ZIP somewhere else, use that location instead. Confirm that
+the server and Hermes are ready:
 
 ```powershell
 curl.exe --silent --show-error --fail http://127.0.0.1:8080/health
@@ -50,21 +50,21 @@ hermes config get model.base_url
 hermes config get model.default
 ```
 
-Expected configuration values are `custom`,
-`http://127.0.0.1:8080/v1`, and `gemma-4-26b-a4b-local`.
+The expected configuration values are `custom`, `http://127.0.0.1:8080/v1`, and
+`gemma-4-26b-a4b-local`.
 
 > Important: skills added on disk become available in a **new Hermes session**.
 > This lab exits and restarts Hermes after every skill change for that reason.
 
 ---
 
-## Exercise 1 - Use a bundled skill
+## Exercise 1 - Use a Bundled Skill
 
 **Time:** 12 minutes
 **Skill:** `systematic-debugging`
 **Scenario:** A health check is failing because it was given the wrong endpoint.
 
-### 1. Prove that the skill is already installed
+### 1. Confirm that the skill is already installed
 
 Run this from PowerShell, not from inside a Hermes chat:
 
@@ -75,7 +75,7 @@ hermes skills list | Select-String "systematic-debugging"
 You should see the skill name and a description about root-cause debugging. You
 did not download this skill; it was bundled with Hermes.
 
-### 2. Establish the evidence yourself
+### 2. Gather the evidence yourself
 
 Run both commands and compare their exit behavior:
 
@@ -84,8 +84,8 @@ curl.exe --silent --show-error --fail http://127.0.0.1:8080/health
 curl.exe --silent --show-error --fail http://127.0.0.1:8081/health
 ```
 
-Port `8080` should succeed. Port `8081` should fail. Do not start a second
-server and do not change the working server.
+Port `8080` should succeed, and port `8081` should fail. Do not start a second
+server or change the working server.
 
 ### 3. Give the bundled skill a real task
 
@@ -119,16 +119,16 @@ Your report passes if it:
 
 ---
 
-## Exercise 2 - Install and use the Meme Generation skill
+## Exercise 2 - Install and Use the Meme Generation Skill
 
 **Time:** 15-20 minutes
 **Skill:** `meme-generation`
 **Scenario:** Create real PNG memes with the local Gemma model.
 
 This official optional skill downloads a classic Imgflip template and adds
-captions with Python Pillow. No API key or paid service is required. The first
-use requires internet access to download the selected template. The pinned
-Hermes build already includes Pillow, so do not run a separate `pip install`.
+captions with Python Pillow. No API key or paid service is required. First use
+requires internet access to download the selected template. The pinned Hermes
+build already includes Pillow, so do not run a separate `pip install`.
 
 ### 1. Check internet access to the template
 
@@ -152,7 +152,7 @@ Imgflip; resolve that before the workshop.
 hermes skills inspect official/creative/meme-generation
 ```
 
-Confirm that the output shows:
+Confirm that the output includes:
 
 - name `meme-generation`;
 - source and trust `official`;
@@ -160,7 +160,7 @@ Confirm that the output shows:
 - PNG output; and
 - external access to download an Imgflip template.
 
-Inspection before installation is the habit to use for every downloaded skill.
+Inspecting before installation is the habit to use for every downloaded skill.
 
 ### 3. Install, audit, and verify
 
@@ -184,7 +184,7 @@ hermes
 
 ### 5. Create the first controlled meme
 
-At the Hermes prompt, enter this as one message:
+At the Hermes prompt, enter this as a single message:
 
 ```text
 /meme-generation Use the classic Drake template to create a workshop meme.
@@ -194,7 +194,7 @@ Keep the captions exactly as written. Use the classic template mode, not custom 
 ```
 
 Hermes should load the skill, download the Drake template, add both captions,
-and save `LOCAL_AI_MEME.png`. Exit Hermes with `Ctrl+C` after it finishes.
+and save `LOCAL_AI_MEME.png`. After it finishes, exit Hermes with `Ctrl+C`.
 
 ### 6. Verify the output from PowerShell
 
@@ -206,7 +206,7 @@ Invoke-Item ".\LOCAL_AI_MEME.png"
 ```
 
 `Test-Path` must return `True`. Confirm that the Drake template is visible,
-both captions are readable and in the correct panels, and the image is not
+both captions are readable and in the correct panels, and that the image is not
 empty or corrupted.
 
 ### 7. Creative team challenge
@@ -238,11 +238,11 @@ The exercise passes if:
 - the skill is invoked through `/meme-generation`;
 - `LOCAL_AI_MEME.png` exists, opens, and contains the required captions;
 - `MY_WORKSHOP_MEME.png` contains an original, workplace-appropriate joke; and
-- both images were produced through the local Gemma model and installed skill.
+- both images were produced by the local Gemma model using the installed skill.
 
 ---
 
-## Exercise 3 - Create and use a custom skill
+## Exercise 3 - Create and Use a Custom Skill
 
 **Time:** 20 minutes
 **Skill:** `local-ai-readiness`
@@ -269,7 +269,7 @@ The last command should print a path ending in
 
 ### 2. Author `SKILL.md` from the command line
 
-Copy this whole block into PowerShell. It writes UTF-8 without a byte-order
+Copy this whole block into PowerShell. It writes UTF-8 without a byte order
 mark, which avoids frontmatter parsing problems on Windows:
 
 ```powershell
@@ -342,7 +342,7 @@ If nothing is returned, see Troubleshooting below before continuing.
 hermes
 ```
 
-At the Hermes prompt, enter:
+At the Hermes prompt, enter this as a single message:
 
 ```text
 /local-ai-readiness Validate this computer and create LOCAL_AI_READINESS.md in the current directory. Show me the final verdict and the evidence you captured.
@@ -362,7 +362,7 @@ Your work passes if:
 - `hermes skills list` discovers `local-ai-readiness`;
 - the slash command loads without an unknown-skill error;
 - the report contains actual endpoint and Hermes configuration evidence;
-- its model IDs agree; and
+- the model IDs agree; and
 - the verdict follows the rules in your `SKILL.md`.
 
 ---
@@ -388,7 +388,7 @@ If it contains only the `local-ai-readiness` skill you created in this exercise:
 Remove-Item -LiteralPath $skillDirectory -Recurse -Force
 ```
 
-Do not delete the whole `skills` directory; it also contains Hermes's bundled
+Do not delete the whole `skills` directory; it also contains Hermes bundled
 skills.
 
 ## Troubleshooting
