@@ -55,6 +55,13 @@ The model download is approximately 14.4 GB and is automatically resumed if
 the connection is interrupted. The script verifies the model checksum before
 using it.
 
+For non-interactive or agent-driven setup, explicitly approve the large model
+download with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-HermesLocalWorkshop.ps1" -AcceptLargeDownload
+```
+
 ## When setup reports `WORKSHOP READY`
 
 The local model server is already running in the background and Hermes is
@@ -92,11 +99,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Stop-HermesLocalWorks
 
 - Copies the precompiled llama.cpp runtime to
   `%USERPROFILE%\Hermes-Local-Workshop\hermes-llamacpp-gemma4-workshop-windows-x64-intel-vulkan-v0.3.0`
-- Installs the pinned Hermes Agent build under `%LOCALAPPDATA%\hermes`
-- Fetches that exact Hermes commit over HTTPS with Windows line-ending settings
-  applied before checkout; falls back to SSH on port 22, then port 443
-- Lets the official Hermes installer provision its private Python, Node.js,
-  `uv`, Git, and required packages
+- Checks for `uv` (astral-sh) on `PATH` and installs it with `winget` if missing
+- Installs Hermes Agent with the official non-interactive installer
+  (`https://hermes-agent.nousresearch.com/install.ps1 -SkipSetup -NonInteractive`),
+  the same one-liner as `iex (irm https://hermes-agent.nousresearch.com/install.ps1)`
+- Lets that official installer provision its own Python, Node.js, Git, and
+  required packages
+- Asks for confirmation in an interactive console before starting the large
+  (multi-GB) Gemma 4 download
 - Downloads and verifies the Gemma 4 Q4_0 GGUF model
 - Starts llama.cpp on `http://127.0.0.1:8080`
 - Configures Hermes to use `http://127.0.0.1:8080/v1`
@@ -118,18 +128,17 @@ are reused when valid.
 
 ## Home and company networks
 
-Double-click the same `RUN_EASY_SETUP.cmd` on either network. GitHub source
-retrieval tries HTTPS first, then SSH on port 22 and SSH on port 443. SSH routes
-require an existing authorized GitHub SSH key and trusted host entry. Setup
-never disables certificate or SSH host verification or changes global Git settings.
+Double-click the same `RUN_EASY_SETUP.cmd` on either network. The Hermes installer
+is fetched over HTTPS only (no SSH/Git clone), with automatic retries that honor
+a server's `Retry-After` header if a download is rate-limited (HTTP 429).
 
 Model downloads try curl, then Windows HTTPS (Windows proxy/certificate settings),
 with bounded retries and resume support. If a server ignores resume requests,
 the Windows downloader safely starts the file again. SHA-256 is checked afterward.
 
-The network must still allow GitHub/raw GitHub, Python package hosting, Node.js,
-Hugging Face and its download CDN, and the other dependency download services.
-SSH only helps with Git source retrieval; it cannot unblock those HTTPS downloads.
-Company proxy or firewall restrictions may require IT assistance. Test the actual
-employee hotspot before the workshop; home testing cannot certify that network.
+The network must still allow `hermes-agent.nousresearch.com`, Python package
+hosting, Node.js, Hugging Face and its download CDN, and the `winget` package
+source (only needed if `uv` is not already installed). Company proxy or firewall
+restrictions may require IT assistance. Test the actual employee hotspot before
+the workshop; home testing cannot certify that network.
 

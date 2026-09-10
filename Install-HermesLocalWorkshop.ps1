@@ -1,7 +1,9 @@
+#Requires -Version 5.1
 [CmdletBinding()]
 param(
     [switch]$SkipHermesInstall,
     [switch]$ForceModelDownload,
+    [switch]$AcceptLargeDownload,
     [switch]$DoNotStartServer
 )
 
@@ -19,9 +21,8 @@ $modelPath = Join-Path $modelDirectory "gemma-4-26B_q4_0-it.gguf"
 $modelPartialPath = "$modelPath.partial"
 $expectedModelSha = "3ECA3B8F6D7BAF218A7DD6BBA5FB59A56EE25FE2D567B6F5F589B4F697ECA51D"
 $modelUrl = "https://huggingface.co/google/gemma-4-26B-A4B-it-qat-q4_0-gguf/resolve/8afd43710afbb87c711f33f7e7c11b1434a9fa1a/gemma-4-26B_q4_0-it.gguf?download=true"
-$hermesCommit = "30b83ab7b1f194503de9f5545d88c81c4db91e3f"
-$installerUrl = "https://raw.githubusercontent.com/NousResearch/hermes-agent/$hermesCommit/scripts/install.ps1"
-$installerPath = Join-Path $env:TEMP "hermes-install-$hermesCommit.ps1"
+$installerUrl = "https://hermes-agent.nousresearch.com/install.ps1"
+$installerPath = Join-Path $env:TEMP "hermes-install.ps1"
 $transcriptStarted = $false
 
 function Write-Step {
@@ -146,181 +147,147 @@ function Invoke-Hermes {
     return $result.Text
 }
 
-function Get-HermesGitExecutable {
-    $gitCandidates = @()
-    $pathGit = Get-Command git.exe -ErrorAction SilentlyContinue
-    if ($pathGit) { $gitCandidates += $pathGit.Source }
-    $gitCandidates += @(
-        (Join-Path $env:LOCALAPPDATA "hermes\git\cmd\git.exe"),
-        (Join-Path $env:LOCALAPPDATA "hermes\git\bin\git.exe")
-    )
-
-    foreach ($gitCandidate in $gitCandidates | Select-Object -Unique) {
-        if ($gitCandidate -and (Test-Path -LiteralPath $gitCandidate)) {
-            return $gitCandidate
+function Get-Sha256Hash {
+    # Avoids depending on the Get-FileHash cmdlet, which can be missing if
+    # Microsoft.PowerShell.Utility fails to autoload in a locked-down environment.
+    param([string]$LiteralPath)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $fileStream = [IO.File]::OpenRead($LiteralPath)
+        try {
+            $hashBytes = $sha256.ComputeHash($fileStream)
         }
+        finally { $fileStream.Dispose() }
     }
-    throw "Git was installed by the Hermes Git stage, but git.exe could not be located."
+    finally { $sha256.Dispose() }
+    return [System.BitConverter]::ToString($hashBytes).Replace("-", "").ToUpperInvariant()
 }
 
-function Move-HermesManagedRepositoryAside {
-    param([string]$Reason)
-
-    $hermesRoot = Join-Path $env:LOCALAPPDATA "hermes"
-    $repositoryPath = Join-Path $hermesRoot "hermes-agent"
-    if (-not (Test-Path -LiteralPath $repositoryPath)) { return $null }
-
-    $resolvedHermesRoot = [IO.Path]::GetFullPath($hermesRoot).TrimEnd("\") + "\"
-    $resolvedRepository = [IO.Path]::GetFullPath($repositoryPath)
-    if (-not $resolvedRepository.StartsWith($resolvedHermesRoot, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "Refusing to move a repository outside the managed Hermes directory: $resolvedRepository"
-    }
-
-    $backupRoot = Join-Path $hermesRoot "backups"
-    New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
-    $backupPath = Join-Path $backupRoot ("hermes-agent-before-easy-workshop-{0}-{1}" -f (Get-Date -Format "yyyyMMdd-HHmmss"), ([Guid]::NewGuid().ToString("N").Substring(0, 8)))
-    Move-Item -LiteralPath $repositoryPath -Destination $backupPath
-    Write-Warning "$Reason The existing managed repository was preserved at: $backupPath"
-    return $backupPath
+function Get-HttpStatusCode {
+    param($ErrorRecord)
+    $response = $ErrorRecord.Exception.Response
+    if ($response -and $response.StatusCode) { return [int]$response.StatusCode }
+    return $null
 }
 
-function Prepare-HermesRepositoryForPin {
-    param([string]$GitExecutable)
-
-    $hermesRoot = Join-Path $env:LOCALAPPDATA "hermes"
-    $repositoryPath = Join-Path $hermesRoot "hermes-agent"
-    if (-not (Test-Path -LiteralPath $repositoryPath)) { return }
-
-    if (-not (Test-Path -LiteralPath (Join-Path $repositoryPath ".git"))) {
-        Move-HermesManagedRepositoryAside "The existing Hermes source directory is not a Git repository."
-        return
-    }
-
-    $originResult = Invoke-NativeCommandCapture -FilePath $GitExecutable -ArgumentList @("-C", $repositoryPath, "remote", "get-url", "origin")
-    if ($originResult.ExitCode -ne 0 -or $originResult.Text.Trim() -notmatch "^(?i:https://github\.com/|git@github\.com:|ssh://git@ssh\.github\.com:443/)NousResearch/hermes-agent(?:\.git)?$") {
-        Move-HermesManagedRepositoryAside "The existing Hermes repository has an unexpected origin."
-        return
-    }
-
-    $configResult = Invoke-NativeCommandCapture -FilePath $GitExecutable -ArgumentList @("-C", $repositoryPath, "config", "core.autocrlf", "false")
-    if ($configResult.ExitCode -ne 0) {
-        Move-HermesManagedRepositoryAside "The existing Hermes repository could not be configured for LF line endings."
-        return
-    }
-
-    $statusResult = Invoke-NativeCommandCapture -FilePath $GitExecutable -ArgumentList @("-C", $repositoryPath, "status", "--porcelain", "--untracked-files=all")
-    if ($statusResult.ExitCode -ne 0) {
-        Move-HermesManagedRepositoryAside "The existing Hermes repository status could not be read."
-        return
-    }
-
-    $statusLines = @($statusResult.Text -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    if ($statusLines.Count -eq 0) { return }
-
-    $dirtyPaths = @(
-        foreach ($statusLine in $statusLines) {
-            if ($statusLine.Length -ge 4) {
-                $statusLine.Substring(3).Trim().Trim('"')
+function Get-HttpRetryAfterSeconds {
+    # Works for both Windows PowerShell's WebException and PowerShell 7's HttpResponseException.
+    param($ErrorRecord)
+    $response = $ErrorRecord.Exception.Response
+    if (-not $response) { return $null }
+    try {
+        $retryAfterValues = $null
+        if ($response.Headers -is [System.Net.Http.Headers.HttpResponseHeaders]) {
+            if ($response.Headers.RetryAfter -and $response.Headers.RetryAfter.Delta) {
+                return [int]$response.Headers.RetryAfter.Delta.Value.TotalSeconds
             }
         }
-    )
-    $onlyLockfileChurn = ($dirtyPaths.Count -gt 0 -and @($dirtyPaths | Where-Object { $_ -ne "uv.lock" }).Count -eq 0)
-
-    if ($onlyLockfileChurn) {
-        $lockfilePath = Join-Path $repositoryPath "uv.lock"
-        if (Test-Path -LiteralPath $lockfilePath) {
-            $backupRoot = Join-Path $hermesRoot "backups"
-            New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
-            $lockfileBackup = Join-Path $backupRoot ("uv.lock-before-easy-workshop-{0}.bak" -f (Get-Date -Format "yyyyMMdd-HHmmss"))
-            Copy-Item -LiteralPath $lockfilePath -Destination $lockfileBackup -Force
+        else {
+            $retryAfterValues = $response.Headers["Retry-After"]
         }
-
-        Write-Host "  - Repairing Git line-ending churn in the managed uv.lock file"
-        $restoreResult = Invoke-NativeCommandCapture -FilePath $GitExecutable -ArgumentList @("-C", $repositoryPath, "-c", "core.autocrlf=false", "checkout", "--", "uv.lock")
-        if ($restoreResult.ExitCode -eq 0) {
-            $verifyResult = Invoke-NativeCommandCapture -FilePath $GitExecutable -ArgumentList @("-C", $repositoryPath, "status", "--porcelain", "--untracked-files=all")
-            if ($verifyResult.ExitCode -eq 0 -and [string]::IsNullOrWhiteSpace($verifyResult.Text)) {
-                Write-Host "[OK] Managed Hermes repository is clean for the pinned checkout." -ForegroundColor Green
-                return
-            }
+        if ($retryAfterValues) {
+            $parsedSeconds = 0
+            if ([int]::TryParse(@($retryAfterValues)[0], [ref]$parsedSeconds)) { return $parsedSeconds }
         }
     }
-
-    Move-HermesManagedRepositoryAside "The managed Hermes repository contains changes that cannot be safely repaired automatically."
+    catch { }
+    return $null
 }
 
-function Invoke-HermesRepositoryStage {
-    param([string]$GitExecutable)
-
-    # The upstream fresh-clone path replaces GIT_CONFIG_COUNT, losing our
-    # autocrlf override, and checks out main before disabling CRLF conversion.
-    # Initialize locally and fetch only the pin so no checkout can precede the
-    # required configuration. Command-line -c also wins over inherited config.
-    $repositoryPath = Join-Path $env:LOCALAPPDATA "hermes\hermes-agent"
-    $gitOptions = @("-c", "core.autocrlf=false", "-c", "core.longpaths=true", "-c", "windows.appendAtomically=false")
-    Prepare-HermesRepositoryForPin -GitExecutable $GitExecutable | Out-Host
-    if (Test-Path -LiteralPath $repositoryPath) {
-        $head = Invoke-NativeCommandCapture -FilePath $GitExecutable -ArgumentList ($gitOptions + @("-C", $repositoryPath, "rev-parse", "HEAD"))
-        if ($head.ExitCode -eq 0 -and $head.Text.Trim() -eq $hermesCommit) {
-            Write-Host "[OK] Existing Hermes checkout matches the workshop commit." -ForegroundColor Green
+function Invoke-DownloadWithRetry {
+    param([string]$Uri, [string]$OutFile, [int]$MaxAttempts = 6)
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing
             return
         }
-        Move-HermesManagedRepositoryAside "The existing checkout does not match the workshop commit." | Out-Host
+        catch {
+            Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
+            if ($attempt -eq $MaxAttempts) { throw }
+            $statusCode = Get-HttpStatusCode $_
+            $retryAfterSeconds = Get-HttpRetryAfterSeconds $_
+            if ($statusCode -eq 429) {
+                # Rate limits can require a longer cooldown than a simple backoff.
+                $retryDelay = if ($retryAfterSeconds) { $retryAfterSeconds } else { 30 * $attempt }
+                Write-Warning "Download attempt $attempt of $MaxAttempts was rate limited (HTTP 429). Retrying in $retryDelay seconds."
+            }
+            else {
+                $retryDelay = 5 * $attempt
+                Write-Warning "Download attempt $attempt of $MaxAttempts failed ($($_.Exception.Message)). Retrying in $retryDelay seconds."
+            }
+            Start-Sleep -Seconds $retryDelay
+        }
     }
+}
 
-    Write-Host "  - Fetching pinned Hermes source over HTTPS"
-    New-Item -ItemType Directory -Path $repositoryPath -Force | Out-Null
-    $commands = @(
-        @("init", "--quiet", $repositoryPath),
-        @("-C", $repositoryPath, "config", "core.autocrlf", "false"),
-        @("-C", $repositoryPath, "config", "core.longpaths", "true"),
-        @("-C", $repositoryPath, "config", "windows.appendAtomically", "false"),
-        @("-C", $repositoryPath, "remote", "add", "origin", "https://github.com/NousResearch/hermes-agent.git")
-    )
-    foreach ($command in $commands) {
-        $result = Invoke-NativeCommandCapture -FilePath $GitExecutable -ArgumentList ($gitOptions + $command)
-        if ($result.ExitCode -ne 0) {
-            throw "Preparing pinned Hermes source failed (exit $($result.ExitCode)): $($command -join ' ')`n$($result.Text)"
-        }
+function Test-UvInstalled {
+    if (Get-Command uv -ErrorAction SilentlyContinue) {
+        Write-Host "  - uv (astral-sh) found" -ForegroundColor Green
+        return
     }
-    $transports = @(
-        @{ Label = "HTTPS"; Url = "https://github.com/NousResearch/hermes-agent.git" },
-        @{ Label = "SSH port 22"; Url = "git@github.com:NousResearch/hermes-agent.git" },
-        @{ Label = "SSH port 443"; Url = "ssh://git@ssh.github.com:443/NousResearch/hermes-agent.git" }
-    )
-    $fetched = $false
-    foreach ($transport in $transports) {
-        Write-Host "  - Trying GitHub $($transport.Label)"
-        $options = $gitOptions + @("-c", "http.connectTimeout=20", "-c", "http.lowSpeedLimit=1024", "-c", "http.lowSpeedTime=60")
-        if ($transport.Label -like "SSH*") {
-            $options += @("-c", "core.sshCommand=ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ConnectionAttempts=1")
-        }
-        $previousPrompt = $env:GIT_TERMINAL_PROMPT
-        try {
-            $env:GIT_TERMINAL_PROMPT = "0"
-            $result = Invoke-NativeCommandCapture $GitExecutable ($options + @("-C", $repositoryPath, "fetch", "--depth", "1", "--no-tags", $transport.Url, $hermesCommit))
-        }
-        finally { $env:GIT_TERMINAL_PROMPT = $previousPrompt }
-        if ($result.ExitCode -eq 0) {
-            $origin = Invoke-NativeCommandCapture $GitExecutable ($gitOptions + @("-C", $repositoryPath, "remote", "set-url", "origin", $transport.Url))
-            if ($origin.ExitCode -ne 0) { throw $origin.Text }
-            $fetched = $true
-            break
-        }
-        Write-Host "  - $($transport.Label) unavailable (Git exit $($result.ExitCode)); trying the next route."
-        Write-Verbose $result.Text
+    Write-Warning "uv (astral-sh.uv) was not found on PATH; installing via winget..."
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        throw "uv is required but not installed, and winget is not available to install it automatically. Install uv manually: https://docs.astral.sh/uv/getting-started/installation/"
     }
-    if (-not $fetched) {
-        throw "GitHub is unreachable through HTTPS and SSH. SSH requires an existing authorized GitHub key and trusted host entry. Ask IT to permit GitHub or use another approved network. Last Git error: $($result.Text)"
+    winget install --id astral-sh.uv --exact --silent --accept-package-agreements --accept-source-agreements
+    if ($LASTEXITCODE -ne 0) {
+        throw "winget install astral-sh.uv failed with exit code $LASTEXITCODE."
     }
-    $checkout = Invoke-NativeCommandCapture $GitExecutable ($gitOptions + @("-C", $repositoryPath, "checkout", "--quiet", "--detach", $hermesCommit))
-    if ($checkout.ExitCode -ne 0) { throw $checkout.Text }
-    $head = Invoke-NativeCommandCapture -FilePath $GitExecutable -ArgumentList ($gitOptions + @("-C", $repositoryPath, "rev-parse", "HEAD"))
-    $status = Invoke-NativeCommandCapture -FilePath $GitExecutable -ArgumentList ($gitOptions + @("-C", $repositoryPath, "status", "--porcelain", "--untracked-files=all"))
-    if ($head.ExitCode -ne 0 -or $head.Text.Trim() -ne $hermesCommit -or $status.ExitCode -ne 0 -or -not [string]::IsNullOrWhiteSpace($status.Text)) {
-        throw "Hermes source verification failed: expected a clean checkout at $hermesCommit.`n$($head.Text)`n$($status.Text)"
+    # Refresh PATH from the registry so this process can see the newly installed uv.exe.
+    $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + [Environment]::GetEnvironmentVariable("Path", "Machine")
+    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+        throw "uv was installed via winget but is not on PATH in this session. Open a new terminal and re-run setup."
     }
-    Write-Host "[OK] Clean Hermes checkout verified at $hermesCommit." -ForegroundColor Green
+    Write-Host "  - uv installed via winget" -ForegroundColor Green
+}
+
+# HKCU\Environment is read and written unexpanded: [Environment]::SetEnvironmentVariable
+# rewrites PATH as REG_SZ, permanently baking out any %VAR% references it contains.
+function Add-UserPathEntry {
+    param([string]$Directory)
+    $environmentKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
+    if ($null -eq $environmentKey) {
+        throw "The user environment registry key (HKCU\Environment) could not be opened."
+    }
+    try {
+        $existingValue = [string]$environmentKey.GetValue("Path", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        $existingEntries = @($existingValue -split ";" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ($existingEntries -contains $Directory) { return }
+        $valueKind = if (@($environmentKey.GetValueNames()) -contains "Path") {
+            $environmentKey.GetValueKind("Path")
+        }
+        else {
+            [Microsoft.Win32.RegistryValueKind]::ExpandString
+        }
+        $environmentKey.SetValue("Path", ((@($Directory) + $existingEntries) -join ";"), $valueKind)
+    }
+    finally {
+        $environmentKey.Dispose()
+    }
+}
+
+function Test-HasInteractiveConsole {
+    try {
+        return (
+            [Environment]::UserInteractive `
+            -and (-not [Console]::IsInputRedirected) `
+            -and (-not [Console]::IsOutputRedirected) `
+            -and ($Host.Name -eq "ConsoleHost")
+        )
+    }
+    catch { return $false }
+}
+
+function Confirm-ModelDownload {
+    if ($AcceptLargeDownload) { return $true }
+    if (-not (Test-HasInteractiveConsole)) {
+        throw "Gemma 4 has not finished downloading yet. Re-run setup with -AcceptLargeDownload to explicitly approve the large Hugging Face download."
+    }
+    Write-Host ""
+    Write-Host "Gemma 4 has not finished downloading yet." -ForegroundColor Yellow
+    Write-Host "Continuing will begin a large (multi-GB) download from Hugging Face." -ForegroundColor Yellow
+    $response = Read-Host "Begin the model download now? [Y/n]"
+    return ($response -eq "" -or $response -match "^[Yy]")
 }
 
 try {
@@ -358,6 +325,7 @@ try {
     if (-not (Test-Path -LiteralPath $vulkanLoader)) {
         throw "The Vulkan runtime was not found. Install the IT-approved Intel graphics driver, reboot, and retry. The Vulkan SDK is not required."
     }
+    Test-UvInstalled
 
     $payloadSums = Join-Path $payloadRoot "SHA256SUMS.txt"
     if (-not (Test-Path -LiteralPath $payloadSums)) {
@@ -374,7 +342,7 @@ try {
         if (-not (Test-Path -LiteralPath $payloadFile)) {
             throw "Payload file is missing: $relativePayloadPath"
         }
-        $actualPayloadSha = (Get-FileHash -LiteralPath $payloadFile -Algorithm SHA256).Hash.ToUpperInvariant()
+        $actualPayloadSha = Get-Sha256Hash -LiteralPath $payloadFile
         if ($actualPayloadSha -ne $expectedPayloadSha) {
             throw "Payload checksum mismatch: $relativePayloadPath"
         }
@@ -409,31 +377,14 @@ try {
     Write-Step 2 "Install and verify Hermes Agent"
     if (-not $SkipHermesInstall) {
         [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-        for ($attempt = 1; $attempt -le 3; $attempt++) {
-            try {
-                Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing -TimeoutSec 60
-                break
-            }
-            catch {
-                if ($attempt -eq 3) { throw "Cannot download the pinned installer from raw.githubusercontent.com. This step requires HTTPS even when Git uses SSH. Check this network's proxy/firewall. $($_.Exception.Message)" }
-                Write-Host "  - Installer download interrupted; retrying ($attempt/3)."
-                Start-Sleep -Seconds 3
-            }
-        }
+        Invoke-DownloadWithRetry -Uri $installerUrl -OutFile $installerPath
         if ((Get-Item -LiteralPath $installerPath).Length -lt 10000) {
             throw "The downloaded Hermes installer is unexpectedly small."
         }
 
-        Invoke-HermesInstaller "Hermes uv stage" @("-Stage", "uv", "-Commit", $hermesCommit)
-        Invoke-HermesInstaller "Hermes Git stage" @("-Stage", "git", "-Commit", $hermesCommit)
-        $hermesGitExecutable = Get-HermesGitExecutable
-        Invoke-HermesRepositoryStage -GitExecutable $hermesGitExecutable
-        Invoke-HermesInstaller "Hermes Python stage" @("-Stage", "python", "-Commit", $hermesCommit)
-        # Source is already verified. Do not let the upstream installer fetch
-        # it again using a different transport or reset its line-ending policy.
-        foreach ($stage in @("node", "system-packages", "venv", "dependencies", "node-deps", "path", "config-templates", "platform-sdks", "bootstrap-marker")) {
-            Invoke-HermesInstaller "Hermes $stage stage" @("-Stage", $stage, "-SkipSetup", "-Commit", $hermesCommit)
-        }
+        # Single, non-interactive install -- equivalent to the official
+        # `iex (irm https://hermes-agent.nousresearch.com/install.ps1)` one-liner.
+        Invoke-HermesInstaller "Installing Hermes Agent" @("-SkipSetup", "-NonInteractive")
     }
     else {
         Write-Host "Hermes installation was skipped by request. Existing installation will be validated."
@@ -444,11 +395,7 @@ try {
     if ($pathEntries -notcontains $hermesBin) {
         $env:Path = "$hermesBin;$env:Path"
     }
-    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    $userPathEntries = @($userPath -split ";")
-    if ($userPathEntries -notcontains $hermesBin) {
-        [Environment]::SetEnvironmentVariable("Path", (($hermesBin) + ";" + ($userPathEntries -join ";")).TrimEnd(";"), "User")
-    }
+    Add-UserPathEntry -Directory $hermesBin
 
     $hermesLauncher = Find-HermesLauncher
     $hermesVersion = (Invoke-Hermes $hermesLauncher @("--version") | Out-String).Trim()
@@ -459,12 +406,15 @@ try {
     New-Item -ItemType Directory -Path $modelDirectory -Force | Out-Null
     $validModelExists = $false
     if (Test-Path -LiteralPath $modelPath) {
-        $existingModelSha = (Get-FileHash -LiteralPath $modelPath -Algorithm SHA256).Hash.ToUpperInvariant()
+        $existingModelSha = Get-Sha256Hash -LiteralPath $modelPath
         $validModelExists = ($existingModelSha -eq $expectedModelSha)
     }
     if ($ForceModelDownload) { $validModelExists = $false }
 
     if (-not $validModelExists) {
+        if (-not (Confirm-ModelDownload)) {
+            throw "Model download declined. Run this installer again when ready to download Gemma 4."
+        }
         if (Test-Path -LiteralPath $modelPath) {
             $invalidModelPath = "$modelPath.invalid-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
             Move-Item -LiteralPath $modelPath -Destination $invalidModelPath
@@ -489,14 +439,14 @@ try {
             Receive-WorkshopDownload -Uri $modelUrl -Destination $modelPartialPath
         }
 
-        $downloadedModelSha = (Get-FileHash -LiteralPath $modelPartialPath -Algorithm SHA256).Hash.ToUpperInvariant()
+        $downloadedModelSha = Get-Sha256Hash -LiteralPath $modelPartialPath
         if ($downloadedModelSha -ne $expectedModelSha) {
             throw "Gemma 4 checksum verification failed. The partial file was kept at $modelPartialPath."
         }
         Move-Item -LiteralPath $modelPartialPath -Destination $modelPath -Force
     }
 
-    $verifiedModelSha = (Get-FileHash -LiteralPath $modelPath -Algorithm SHA256).Hash.ToUpperInvariant()
+    $verifiedModelSha = Get-Sha256Hash -LiteralPath $modelPath
     if ($verifiedModelSha -ne $expectedModelSha) {
         throw "Gemma 4 checksum verification failed after installation."
     }
