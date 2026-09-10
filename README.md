@@ -7,7 +7,7 @@ installer, start/stop scripts, and documentation.
 
 | Folder | Inference engine | Backend | Notes |
 | --- | --- | --- | --- |
-| [`llamacpp-workshop/`](llamacpp-workshop/README_FIRST.md) | llama.cpp | Vulkan (Intel GPU) | Ships a precompiled llama.cpp runtime; downloads and verifies the Gemma 4 model on first run. |
+| [`llamacpp-workshop/`](llamacpp-workshop/readme.md) | llama.cpp | Vulkan (Intel GPU) | Ships a precompiled llama.cpp runtime; downloads and verifies the Gemma 4 model on first run. |
 | [`ovms-workshop/`](ovms-workshop/README.md) | OpenVINO Model Server (OVMS) | OpenVINO | Downloads and verifies OVMS; supports multiple selectable models. |
 
 Both packages:
@@ -22,7 +22,7 @@ Both packages:
 Each workshop is self-contained — extract or clone the repo, then follow the
 `README` inside the relevant subfolder:
 
-- **llama.cpp workshop:** see [llamacpp-workshop/README_FIRST.md](llamacpp-workshop/README_FIRST.md)
+- **llama.cpp workshop:** see [llamacpp-workshop/readme.md](llamacpp-workshop/readme.md)
 - **OVMS workshop:** see [ovms-workshop/README.md](ovms-workshop/README.md)
 
 ## Repository layout
