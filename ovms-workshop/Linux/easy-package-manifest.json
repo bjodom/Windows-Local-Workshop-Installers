@@ -1,0 +1,28 @@
+{
+  "package": "workshop_easy_installation_ovms_linux",
+  "audience": "broader team requiring automated setup",
+  "target": "Linux x86_64 (Intel GPU recommended, CPU fallback supported)",
+  "installation": "install-ovms-local-workshop.sh",
+  "model_configuration": "model-config.json",
+  "installed_workshop_directory": "$HOME/OVMS-Local-Workshop/hermes-ovms-workshop-linux-x64-intel-v1.0.0",
+  "components": {
+    "hermes_installer": "https://hermes-agent.nousresearch.com/install.sh",
+    "ovms_release": "v2026.3.1",
+    "ovms_download": "https://github.com/openvinotoolkit/model_server/releases/download/v2026.3.1/ovms_ubuntu24_2026.3.1_python_on.tar.gz",
+    "default_model": "qwen3.5-27b",
+    "supported_models": {
+      "qwen3.5-27b": "OpenVINO/Qwen3.5-27B-int4-ov",
+      "qwen3.6-27b": "OpenVINO/Qwen3.6-27B-int4-ov",
+      "gemma4": "OpenVINO/gemma-4-26b-a4b-it-int4-ov",
+      "qwen3-35b": "OpenVINO/Qwen3.6-35B-A3B-int4-ov"
+    }
+  },
+  "model_bundled": false,
+  "model_download_automated": true,
+  "local_endpoint": "http://127.0.0.1:8000/v1",
+  "manual_prerequisites": {
+    "python3": true,
+    "uv": false,
+    "note": "OVMS is a self-contained prebuilt tarball (Ubuntu 24.04-based) and the Hermes installer provisions its own uv, Node.js, and Python venv automatically; OpenVINO's GPU plugin uses the Intel graphics driver directly. python3 must already be present on the host to drive the installer's JSON handling."
+  }
+}
