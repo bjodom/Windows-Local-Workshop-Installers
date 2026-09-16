@@ -11,7 +11,7 @@ flowchart TD
 
     subgraph OVMSGroup["This package: OVMS + Hermes"]
         direction TB
-        OVMS["ovms.exe<br/>OpenVINO Model Server"] --> OVMSModel["Qwen3.5-27B / Qwen3.6-27B<br/>Gemma-4-26B-A4B / Qwen3.6-35B<br/>(OpenVINO IR, INT4)"]
+        OVMS["ovms.exe<br/>OpenVINO Model Server"] --> OVMSModel["Qwen3.5-27B / Qwen3.6-27B / Qwen3.8-27B<br/>Gemma-4-26B-A4B / Qwen3.6-35B<br/>(OpenVINO IR, INT4)"]
         OVMSModel --> OVGPU["Intel GPU<br/>OpenVINO GPU plugin"]
     end
 
@@ -54,6 +54,7 @@ To pick a different model, pass `-Model`:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-OVMSLocalWorkshop.ps1" -Model qwen3.6-27b
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-OVMSLocalWorkshop.ps1" -Model qwen3.8-27b
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-OVMSLocalWorkshop.ps1" -Model gemma4
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-OVMSLocalWorkshop.ps1" -Model qwen3-35b
 ```

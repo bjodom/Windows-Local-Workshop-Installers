@@ -13,6 +13,7 @@
     "supported_models": {
       "qwen3.5-27b": "OpenVINO/Qwen3.5-27B-int4-ov",
       "qwen3.6-27b": "OpenVINO/Qwen3.6-27B-int4-ov",
+      "qwen3.8-27b": "OpenVINO/Qwen3.8-27B-int4-ov",
       "gemma4": "OpenVINO/gemma-4-26b-a4b-it-int4-ov",
       "qwen3-35b": "OpenVINO/Qwen3.6-35B-A3B-int4-ov"
     }

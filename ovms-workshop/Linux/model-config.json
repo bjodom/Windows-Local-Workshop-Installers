@@ -11,6 +11,12 @@
     "ReasoningParser": "qwen3",
     "ExtraArgs": ["--enable_tool_guided_generation", "true"]
   },
+  "qwen3.8-27b": {
+    "SourceModel": "OpenVINO/Qwen3.8-27B-int4-ov",
+    "ToolParser": "qwen3coder",
+    "ReasoningParser": "qwen3",
+    "ExtraArgs": ["--enable_tool_guided_generation", "true"]
+  },
   "gemma4": {
     "SourceModel": "OpenVINO/gemma-4-26b-a4b-it-int4-ov",
     "ToolParser": "gemma4",
