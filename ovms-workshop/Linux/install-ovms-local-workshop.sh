@@ -47,11 +47,11 @@ OVMS_EXE="$OVMS_DIR/ovms"
 STATE_DIR="$INSTALL_ROOT/.state"
 MODEL_STATE_PATH="$STATE_DIR/selected-model.json"
 MODEL_CONFIG_PATH="$SCRIPT_DIR/model-config.json"
-OVMS_VERSION="2026.3.1"
-OVMS_URL="https://github.com/openvinotoolkit/model_server/releases/download/v${OVMS_VERSION}/ovms_ubuntu24_${OVMS_VERSION}_python_on.tar.gz"
-# Pinned digest for the ubuntu24 python_on release asset, so the archive is still verified if GitHub is unreachable afterward.
-OVMS_EXPECTED_SHA256="0a62f3b94cd42a28b5f15f426a3297e15629502076083722c9447d78a7cd7c1d"
-OVMS_TARBALL="/tmp/ovms-${OVMS_VERSION}-$$.tar.gz"
+OVMS_VERSION=""
+OVMS_URL=""
+OVMS_EXPECTED_SHA256=""
+OVMS_TARBALL=""
+OVMS_VERSION_PATH="$STATE_DIR/ovms-version.txt"
 INSTALLER_URL="https://hermes-agent.nousresearch.com/install.sh"
 INSTALLER_PATH="/tmp/hermes-install-$$.sh"
 TRANSCRIPT_PATH=""
@@ -91,7 +91,7 @@ if [ -z "$MODEL" ] && [ -f "$MODEL_STATE_PATH" ]; then
     SAVED_MODEL="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('model',''))" "$MODEL_STATE_PATH" 2>/dev/null || true)"
 fi
 if [ -z "$MODEL" ]; then
-    MODEL="${SAVED_MODEL:-qwen3.5-27b}"
+    MODEL="${SAVED_MODEL:-qwen3.8-27b}"
 fi
 
 if ! python3 -c "
@@ -184,6 +184,38 @@ invoke_download_with_retry() {
     done
 }
 
+resolve_ovms_release() {
+    local release_location
+    release_location="$(curl -sSIL --max-redirs 0 --connect-timeout 20 --max-time 60 \
+        -A "Linux-Local-Workshop-Installer/latest" -o /dev/null -w '%{redirect_url}' \
+        "https://github.com/openvinotoolkit/model_server/releases/latest" || true)"
+    if [ -z "$release_location" ]; then
+        log_err "Could not resolve the latest OVMS release from GitHub."
+        exit 1
+    fi
+    local tag="${release_location##*/}"
+    if [[ "$tag" != v[0-9]*.[0-9]*.[0-9]* ]]; then
+        log_err "GitHub returned an unexpected latest OVMS release location: $release_location"
+        exit 1
+    fi
+    OVMS_VERSION="${tag#v}"
+    local asset_name="ovms_ubuntu24_${OVMS_VERSION}_python_on.tar.gz"
+    OVMS_URL="https://github.com/openvinotoolkit/model_server/releases/download/v${OVMS_VERSION}/${asset_name}"
+    local checksum_text
+    checksum_text="$(curl -fsSL --retry 3 --connect-timeout 20 --max-time 30 \
+        -A "Linux-Local-Workshop-Installer/$OVMS_VERSION" "${OVMS_URL}.sha256")" || {
+        log_err "Could not retrieve the checksum for the latest OVMS archive."
+        exit 1
+    }
+    OVMS_EXPECTED_SHA256="$(printf '%s' "$checksum_text" | awk 'match($0, /[[:xdigit:]]{64}/) {print substr($0, RSTART, 64); exit}')"
+    if ! [[ "$OVMS_EXPECTED_SHA256" =~ ^[[:xdigit:]]{64}$ ]]; then
+        log_err "The latest OVMS release does not provide a valid SHA-256 checksum."
+        exit 1
+    fi
+    OVMS_EXPECTED_SHA256="$(printf '%s' "$OVMS_EXPECTED_SHA256" | tr '[:upper:]' '[:lower:]')"
+    OVMS_TARBALL="/tmp/ovms-${OVMS_VERSION}-$$.tar.gz"
+}
+
 test_external_endpoint() {
     local name="$1"
     local url="$2"
@@ -257,6 +289,8 @@ main() {
         fi
     done
 
+    resolve_ovms_release
+
     echo "=============================================================="
     echo " HERMES + OVMS - EASY WORKSHOP SETUP"
     echo "=============================================================="
@@ -275,9 +309,16 @@ main() {
 
     log_step 2 "Download and extract OVMS $OVMS_VERSION"
     test_workshop_network
-    if [ -x "$OVMS_EXE" ]; then
+    INSTALLED_OVMS_VERSION=""
+    if [ -f "$OVMS_VERSION_PATH" ]; then
+        INSTALLED_OVMS_VERSION="$(cat "$OVMS_VERSION_PATH")"
+    fi
+    if [ -x "$OVMS_EXE" ] && [ "$INSTALLED_OVMS_VERSION" = "$OVMS_VERSION" ]; then
         log_ok "OVMS is already installed at $OVMS_EXE"
     else
+        if [ -x "$OVMS_EXE" ]; then
+            echo "[INFO] Updating OVMS from ${INSTALLED_OVMS_VERSION:-unknown} to $OVMS_VERSION."
+        fi
         invoke_download_with_retry "$OVMS_URL" "$OVMS_TARBALL"
         ACTUAL_SHA256="$(get_sha256 "$OVMS_TARBALL")"
         if [ "$ACTUAL_SHA256" != "$OVMS_EXPECTED_SHA256" ]; then
@@ -306,6 +347,7 @@ main() {
         mv "$STAGED_OVMS_DIR" "$OVMS_DIR"
         rm -rf "$PREVIOUS_OVMS_DIR" "$EXTRACT_ROOT"
         rm -f "$OVMS_TARBALL"
+        write_atomic_file "$OVMS_VERSION_PATH" "$OVMS_VERSION"
         log_ok "OVMS $OVMS_VERSION extracted."
     fi
     # Ubuntu OVMS archives place the binary under ovms/bin/ovms; normalize OVMS_EXE accordingly.

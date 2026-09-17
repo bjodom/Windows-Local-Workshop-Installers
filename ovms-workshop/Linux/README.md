@@ -52,7 +52,7 @@ To pick a different model, pass `--model`:
 ./install-ovms-local-workshop.sh --model qwen3-35b
 ```
 
-The default model is `qwen3.5-27b`. Model files are downloaded automatically on first
+The default model is `qwen3.8-27b`. Model files are downloaded automatically on first
 run and reused afterward.
 
 The installer remembers the selected model for later restarts. To switch models later,
@@ -94,10 +94,10 @@ below).
 # Send a real test prompt (~100+ tokens of reply) to prove inference actually works
 curl -s http://127.0.0.1:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model": "Qwen3.5-27B-int4-ov", "max_tokens": 200, "temperature": 0, "stream": false, "messages": [{"role": "user", "content": "Why is the sky blue? Explain it in a way a curious 10-year-old would understand."}]}'
+  -d '{"model": "Qwen3.8-27B-int4-ov", "max_tokens": 200, "temperature": 0, "stream": false, "messages": [{"role": "user", "content": "Why is the sky blue? Explain it in a way a curious 10-year-old would understand."}]}'
 ```
 
-Replace `Qwen3.5-27B-int4-ov` with your actual model name if you started a different one
+Replace `Qwen3.8-27B-int4-ov` with your actual model name if you started a different one
 (check with the `/v1/models` command above).
 
 ```bash
@@ -196,7 +196,7 @@ hermes config set model.base_url "http://127.0.0.1:8001/v1"
 
 ## What the setup changes
 
-- Downloads and extracts OVMS 2026.3.1 (Ubuntu 24.04 build) to
+- Resolves and downloads the latest OVMS Ubuntu 24.04 `python_on` release to
   `$HOME/OVMS-Local-Workshop/hermes-ovms-workshop-linux-x64-intel-v1.0.0/ovms`
 - Installs the latest Hermes Agent build under `$HOME/.hermes` with the `hermes`
   command linked into `$HOME/.local/bin`
@@ -211,7 +211,7 @@ hermes config set model.base_url "http://127.0.0.1:8001/v1"
 The endpoint is bound to `127.0.0.1`, so it is not exposed to other computers.
 Installation logs are saved under the installed workshop's `logs` directory.
 
-The installer also verifies the OVMS archive against a pinned SHA-256 digest and
+The installer also verifies the OVMS archive against the release's SHA-256 digest and
 preserves an existing Hermes configuration before changing it. The start script
 sets `LD_LIBRARY_PATH` and `PYTHONPATH` (pointing at the workshop's `ovms/lib`
 folder, where the bundled shared libraries and Python packages live) only for
@@ -225,6 +225,24 @@ only: a proxy that rejects `HEAD`/`HEAD`-equivalent requests or an already-cache
 offline rerun can still continue to the normal installer checks.
 
 ## Where the model files are stored
+
+### Where is the OVMS server installed?
+
+The OVMS server is installed at:
+
+```text
+$HOME/OVMS-Local-Workshop/hermes-ovms-workshop-linux-x64-intel-v1.0.0/ovms/bin/ovms
+```
+
+### Where are the models cached?
+
+Downloaded model files are cached at:
+
+```text
+$HOME/OVMS-Local-Workshop/hermes-ovms-workshop-linux-x64-intel-v1.0.0/models
+```
+
+OVMS compilation files are cached in the sibling `.ovcache` directory.
 
 Everything the workshop downloads stays inside one folder, so nothing is scattered
 across your home directory:

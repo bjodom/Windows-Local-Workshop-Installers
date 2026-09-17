@@ -26,11 +26,12 @@ $ovmsExe = Join-Path $ovmsDir "ovms.exe"
 $stateDirectory = Join-Path $installRoot ".state"
 $modelStatePath = Join-Path $stateDirectory "selected-model.json"
 $modelConfigPath = Join-Path $PSScriptRoot "model-config.json"
-$ovmsVersion = "2026.3.1"
-$ovmsUrl = "https://github.com/openvinotoolkit/model_server/releases/download/v$ovmsVersion/ovms_windows_${ovmsVersion}_python_on.zip"
-# Fallback for the pinned asset so the archive is still verified when the GitHub API is unreachable.
-$ovmsExpectedSha256 = "fb904b4f1671beaa54d423153f8760b711754bcb645d69b81a5c16cc8fe0570a"
-$ovmsZipPath = Join-Path $env:TEMP "ovms-$ovmsVersion.zip"
+$ovmsLatestReleaseUrl = "https://github.com/openvinotoolkit/model_server/releases/latest"
+$ovmsVersion = $null
+$ovmsUrl = $null
+$ovmsExpectedSha256 = $null
+$ovmsZipPath = $null
+$ovmsVersionPath = Join-Path $stateDirectory "ovms-version.txt"
 $installerUrl = "https://hermes-agent.nousresearch.com/install.ps1"
 $installerPath = Join-Path $env:TEMP "hermes-install.ps1"
 $transcriptStarted = $false
@@ -44,7 +45,7 @@ if ([string]::IsNullOrWhiteSpace($Model) -and (Test-Path -LiteralPath $modelStat
     try { $savedModel = (Get-Content -LiteralPath $modelStatePath -Raw | ConvertFrom-Json).model }
     catch { Write-Warning "Saved model state could not be read; using the default model." }
 }
-if ([string]::IsNullOrWhiteSpace($Model)) { $Model = if ($savedModel) { $savedModel } else { "qwen3.5-27b" } }
+if ([string]::IsNullOrWhiteSpace($Model)) { $Model = if ($savedModel) { $savedModel } else { "qwen3.8-27b" } }
 if (@($modelConfigs.PSObject.Properties.Name) -notcontains $Model) {
     throw "Unsupported model '$Model'. Choose one of: $($modelConfigs.PSObject.Properties.Name -join ', ')"
 }
@@ -59,9 +60,6 @@ function Write-Step {
 }
 
 function Get-OVMSAssetDigest {
-    # Skips the api.github.com release lookup entirely: that endpoint shares GitHub's
-    # unauthenticated 60-req/hour/IP limit and contributes to the 429s workshop users hit
-    # on repeated runs, for a value we already have pinned and verified in this script.
     param([string]$AssetName)
     return $ovmsExpectedSha256
 }
@@ -184,6 +182,50 @@ function Invoke-DownloadWithRetry {
             }
             Start-Sleep -Seconds $retryDelay
         }
+    }
+}
+
+function Resolve-OVMSRelease {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $latestLocation = $null
+    $response = $null
+    $request = [Net.HttpWebRequest]::Create($ovmsLatestReleaseUrl)
+    $request.Method = "HEAD"
+    $request.AllowAutoRedirect = $false
+    $request.UserAgent = "Windows-Local-Workshop-Installer/latest"
+    try {
+        $response = $request.GetResponse()
+        $latestLocation = $response.Headers["Location"]
+    }
+    catch {
+        if ($_.Exception.Response) { $latestLocation = $_.Exception.Response.Headers["Location"] }
+    }
+    finally {
+        if ($response) { $response.Dispose() }
+    }
+    if ([string]::IsNullOrWhiteSpace($latestLocation)) {
+        throw "Could not resolve the latest OVMS release from GitHub."
+    }
+    $tag = ([Uri]$latestLocation).Segments[-1]
+    if ($tag -notmatch '^v(\d+\.\d+\.\d+)$') {
+        throw "GitHub returned an unexpected latest OVMS release location: $latestLocation"
+    }
+    $version = $Matches[1]
+    $assetName = "ovms_windows_${version}_python_on.zip"
+    $assetUrl = "https://github.com/openvinotoolkit/model_server/releases/download/v$version/$assetName"
+    $checksumUrl = "$assetUrl.sha256"
+    try {
+        $checksumText = (Invoke-WebRequest -Uri $checksumUrl -Headers @{ "User-Agent" = "Windows-Local-Workshop-Installer/$version" } -TimeoutSec 30 -UseBasicParsing).Content
+        if ($checksumText -notmatch '(?i)\b([0-9a-f]{64})\b') { throw "No SHA-256 digest was found." }
+        $digest = $Matches[1]
+    }
+    catch {
+        throw "Could not retrieve the checksum for ${assetName}: $($_.Exception.Message)"
+    }
+    return [pscustomobject]@{
+        Version = $version
+        Url = $assetUrl
+        Sha256 = $digest.ToLowerInvariant()
     }
 }
 
@@ -377,12 +419,21 @@ try {
     # its own portable Git automatically in the next step. System-wide uv is
     # verified above since this script relies on it being on PATH.
 
+    $release = Resolve-OVMSRelease
+    $ovmsVersion = $release.Version
+    $ovmsUrl = $release.Url
+    $ovmsExpectedSha256 = $release.Sha256
+    $ovmsZipPath = Join-Path $env:TEMP "ovms-$ovmsVersion.zip"
+    $installedOvmsVersion = if (Test-Path -LiteralPath $ovmsVersionPath) { (Get-Content -LiteralPath $ovmsVersionPath -Raw).Trim() } else { $null }
     Write-Step 2 "Download and extract OVMS $ovmsVersion"
     Test-WorkshopNetwork
-    if (Test-Path -LiteralPath $ovmsExe) {
+    if ((Test-Path -LiteralPath $ovmsExe) -and $installedOvmsVersion -eq $ovmsVersion) {
         Write-Host "[OK] OVMS is already installed at $ovmsExe" -ForegroundColor Green
     }
     else {
+        if (Test-Path -LiteralPath $ovmsExe) {
+            Write-Host "[INFO] Updating OVMS from $installedOvmsVersion to $ovmsVersion." -ForegroundColor Yellow
+        }
         Invoke-DownloadWithRetry -Uri $ovmsUrl -OutFile $ovmsZipPath
         $expectedDigest = Get-OVMSAssetDigest ([IO.Path]::GetFileName($ovmsUrl))
         $actualDigest = Get-Sha256Hash -LiteralPath $ovmsZipPath
@@ -407,6 +458,7 @@ try {
             Move-Item -LiteralPath $stagedOvmsDir -Destination $ovmsDir -Force
             Remove-Item -LiteralPath $previousOvmsDir -Recurse -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $ovmsZipPath -Force -ErrorAction SilentlyContinue
+            Write-AtomicTextFile -LiteralPath $ovmsVersionPath -Content $ovmsVersion
         }
         catch {
             if (Test-Path -LiteralPath $previousOvmsDir) {

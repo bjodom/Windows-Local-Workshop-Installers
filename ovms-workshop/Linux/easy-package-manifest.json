@@ -7,9 +7,9 @@
   "installed_workshop_directory": "$HOME/OVMS-Local-Workshop/hermes-ovms-workshop-linux-x64-intel-v1.0.0",
   "components": {
     "hermes_installer": "https://hermes-agent.nousresearch.com/install.sh",
-    "ovms_release": "v2026.3.1",
-    "ovms_download": "https://github.com/openvinotoolkit/model_server/releases/download/v2026.3.1/ovms_ubuntu24_2026.3.1_python_on.tar.gz",
-    "default_model": "qwen3.5-27b",
+    "ovms_release": "latest",
+    "ovms_download": "https://github.com/openvinotoolkit/model_server/releases/latest",
+    "default_model": "qwen3.8-27b",
     "supported_models": {
       "qwen3.5-27b": "OpenVINO/Qwen3.5-27B-int4-ov",
       "qwen3.6-27b": "OpenVINO/Qwen3.6-27B-int4-ov",

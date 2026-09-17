@@ -49,7 +49,7 @@ if ([string]::IsNullOrWhiteSpace($Model) -and (Test-Path -LiteralPath $modelStat
     try { $Model = (Get-Content -LiteralPath $modelStatePath -Raw | ConvertFrom-Json).model }
     catch { Write-Warning "Saved model state could not be read; using the default model." }
 }
-if ([string]::IsNullOrWhiteSpace($Model)) { $Model = "qwen3.5-27b" }
+if ([string]::IsNullOrWhiteSpace($Model)) { $Model = "qwen3.8-27b" }
 if (@($modelConfigs.PSObject.Properties.Name) -notcontains $Model) {
     throw "Unsupported model '$Model'. Choose one of: $($modelConfigs.PSObject.Properties.Name -join ', ')"
 }

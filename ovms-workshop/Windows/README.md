@@ -59,7 +59,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-OVMSLocalWork
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-OVMSLocalWorkshop.ps1" -Model qwen3-35b
 ```
 
-The default model is `qwen3.5-27b`. Model files are downloaded automatically on first
+The default model is `qwen3.8-27b`. Model files are downloaded automatically on first
 run and reused afterward.
 
 The installer remembers the selected model for later restarts. To switch models later,
@@ -102,11 +102,11 @@ below).
 Invoke-WebRequest -Uri "http://127.0.0.1:8000/v1/chat/completions" `
  -Method POST -UseBasicParsing `
  -Headers @{ "Content-Type" = "application/json" } `
- -Body '{"model": "Qwen3.5-27B-int4-ov", "max_tokens": 200, "temperature": 0, "stream": false, "messages": [{"role": "user", "content": "Why is the sky blue? Explain it in a way a curious 10-year-old would understand."}]}' |
+ -Body '{"model": "Qwen3.8-27B-int4-ov", "max_tokens": 200, "temperature": 0, "stream": false, "messages": [{"role": "user", "content": "Why is the sky blue? Explain it in a way a curious 10-year-old would understand."}]}' |
  Select-Object -ExpandProperty Content
 ```
 
-Replace `Qwen3.5-27B-int4-ov` with your actual model name if you started a different one
+Replace `Qwen3.8-27B-int4-ov` with your actual model name if you started a different one
 (check with the `/v1/models` command above).
 
 ```powershell
@@ -230,13 +230,13 @@ port 8080 instead.
 > ```powershell
 > hermes config set model.provider custom
 > hermes config set model.base_url "http://127.0.0.1:8000/v1"
-> hermes config set model.default "Qwen3.5-27B-int4-ov"
+> hermes config set model.default "Qwen3.8-27B-int4-ov"
 > ```
 > (replace the model name with whichever one you actually started)
 
 ## What the setup changes
 
-- Downloads and extracts OVMS 2026.3.1 to
+- Resolves and downloads the latest OVMS Windows `python_on` release to
   `%USERPROFILE%\OVMS-Local-Workshop\hermes-ovms-workshop-windows-x64-intel-v1.0.0\ovms`
 - Installs the latest Hermes Agent build under `%LOCALAPPDATA%\hermes`
 - Lets the official Hermes installer provision its private Python, Node.js,
@@ -250,7 +250,7 @@ port 8080 instead.
 The endpoint is bound to `127.0.0.1`, so it is not exposed to other computers.
 Installation logs are saved under the installed workshop's `logs` directory.
 
-The installer also verifies the OVMS archive against a pinned SHA-256 digest and
+The installer also verifies the OVMS archive against the release's SHA-256 digest and
 preserves an existing Hermes configuration before changing it. The start script
 restores the caller's PowerShell environment after loading OVMS runtime variables,
 detects port conflicts, and removes a stale OVMS process left behind by an
@@ -264,6 +264,24 @@ The preflight is diagnostic only: a proxy that rejects `HEAD` requests or an
 already-cached offline rerun can still continue to the normal installer checks.
 
 ## Where the model files are stored
+
+### Where is the OVMS server installed?
+
+The OVMS server is installed at:
+
+```text
+%USERPROFILE%\OVMS-Local-Workshop\hermes-ovms-workshop-windows-x64-intel-v1.0.0\ovms\ovms.exe
+```
+
+### Where are the models cached?
+
+Downloaded model files are cached at:
+
+```text
+%USERPROFILE%\OVMS-Local-Workshop\hermes-ovms-workshop-windows-x64-intel-v1.0.0\models
+```
+
+OVMS compilation files are cached in the sibling `.ovcache` directory.
 
 Everything the workshop downloads stays inside one folder, so nothing is scattered
 across your user profile:

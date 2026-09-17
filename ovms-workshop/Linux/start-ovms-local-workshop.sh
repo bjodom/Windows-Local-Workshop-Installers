@@ -73,7 +73,7 @@ fi
 if [ -z "$MODEL" ] && [ -f "$MODEL_STATE_PATH" ]; then
     MODEL="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('model',''))" "$MODEL_STATE_PATH" 2>/dev/null || true)"
 fi
-if [ -z "$MODEL" ]; then MODEL="qwen3.5-27b"; fi
+if [ -z "$MODEL" ]; then MODEL="qwen3.8-27b"; fi
 
 if ! python3 -c "
 import json, sys
