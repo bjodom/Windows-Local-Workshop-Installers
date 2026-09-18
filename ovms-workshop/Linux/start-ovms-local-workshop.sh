@@ -204,8 +204,27 @@ save_selected_model_state
 # interpreter init. Both are scoped to the child process only.
 OVMS_LIB_DIR="$WORKSHOP_ROOT/ovms/lib"
 OVMS_PYTHON_DIR="$OVMS_LIB_DIR/python"
+
+# ovms also dynamically links against libpython3.12.so.1.0, which the OVMS
+# package does not bundle and which distros without a python3.12 package
+# (e.g. Ubuntu 26.04, which ships 3.14) won't have on the system linker path.
+# Reuse a uv-managed CPython 3.12 build if one is already installed, since
+# uv/python ecosystems commonly provide it without needing a system package.
+PYTHON_LIB_DIR=""
+for candidate in "$HOME/.local/share/uv/python/cpython-3.12-linux-x86_64-gnu/lib" \
+                  "$HOME"/.local/share/uv/python/cpython-3.12.*-linux-x86_64-gnu/lib; do
+    if [ -e "$candidate/libpython3.12.so.1.0" ]; then
+        PYTHON_LIB_DIR="$candidate"
+        break
+    fi
+done
+if [ -z "$PYTHON_LIB_DIR" ] && ! ldconfig -p 2>/dev/null | grep -q "libpython3\.12\.so\.1\.0"; then
+    echo "Warning: libpython3.12.so.1.0 not found; ovms may fail to start." >&2
+    echo "Install a Python 3.12 runtime (e.g. 'uv python install 3.12') and re-run." >&2
+fi
+
 nohup env \
-    LD_LIBRARY_PATH="$OVMS_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+    LD_LIBRARY_PATH="$OVMS_LIB_DIR${PYTHON_LIB_DIR:+:$PYTHON_LIB_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
     PYTHONPATH="$OVMS_PYTHON_DIR${PYTHONPATH:+:$PYTHONPATH}" \
     "$OVMS_EXE" "${SERVER_ARGS[@]}" >"$STDOUT_LOG" 2>"$STDERR_LOG" &
 SERVER_PID=$!

@@ -333,3 +333,16 @@ The installer also prints a preflight result for each external host before the
 OVMS archive download. A failed preflight is a warning, not an automatic stop;
 the detailed failure and the retry attempts are recorded in the installation
 transcript under `logs`.
+
+### "error while loading shared libraries: libxml2.so.2" on Ubuntu 26.04
+
+Ubuntu 26.04 ships a newer libxml2 with a different soname (`libxml2.so.16`)
+than the Ubuntu 24.04 build OVMS links against (`libxml2.so.2`), so `ovms`
+fails to start. Symlink the newer library to the name `ovms` expects:
+
+```bash
+sudo ln -sf /usr/lib/x86_64-linux-gnu/libxml2.so.16 /usr/lib/x86_64-linux-gnu/libxml2.so.2
+```
+
+You may see harmless `no version information available` warnings from `ovms`
+afterward; they don't affect functionality.
